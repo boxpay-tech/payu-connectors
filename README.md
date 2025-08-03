@@ -7,7 +7,7 @@ It enables merchants to configure PayU credentials, process customer payments, a
 > 👉 Follow this step-by-step guide:  
 > **[How to Install Odoo on Your Server or Local Machine](https://www.odiware.com/odoo/how-to-install-odoo-on-your-server-or-local-machine/)**
 
----
+```
 
 ## 📁 Project Structure
 payment_payu/
@@ -38,7 +38,7 @@ payment_payu/
 │
 └── pycache/ # Auto-generated Python bytecode
 
----
+```
 
 ## ⚙️ Features
 
