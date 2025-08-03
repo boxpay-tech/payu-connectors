@@ -1,4 +1,4 @@
-# 💳 PayU Payment Integration Module for Odoo
+# PayU Payment Integration Module for Odoo
 
 This is a custom **Odoo** module written in **Python** that integrates the **PayU** payment gateway with the Odoo platform.  
 It enables merchants to configure PayU credentials, process customer payments, and manage transactions — all within the Odoo backend.
