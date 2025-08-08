@@ -309,52 +309,61 @@ class PaymentTransaction(models.Model):
 
 
     def _process_notification_data(self, data):
-        """ Override of payment to process the transaction based on custom data.
+        """Override of payment to process the transaction based on custom data."""
+        if self.provider_code != 'payu':
+            return
 
-        Note: self.ensure_one()
-
-        :param dict data: The custom data
-        :return: None
-        """
-        if self.provider_code != 'payu': return
-        
-        
         pprint.pprint("###### PAYU Notification START ######")
 
-        if (data == None):
+        if data is None:
             self._set_canceled()
+            return
 
         self._payu_verify_return_sign(data)
-
         self.provider_reference = data.get('mihpayid')
 
         status = data.get('status')
-        if status == 'success': 
-            if self.state not in ('done'):
-
-                discount = float(data.get('discount', 0))
-                if discount > 0:
-                    pprint.pprint("#.....Calculating Discount.....#")
-                    #TODO : FOR website transaction use sale, for invoice use invoice
-                    sale_order_id = data.get('udf1')
-                    if sale_order_id:
-                        sale_order = request.env['sale.order'].sudo().browse(int(sale_order_id))
-                        # Apply discount to match payment
-                        self.apply_fixed_discount_to_order_lines(sale_order, discount)
-                    else:
-                        _logger.warning("Sale Order id not found in request session")
-
-                net_amount_debit = data.get('net_amount_debit')
-                if net_amount_debit:
-                    self.write({'amount': float(net_amount_debit)})
-                
-                self._set_done()
-
+        if status == 'success':
+            self._handle_success_status(data)
         elif status == 'failure':
-            error_message = data.get('error_Message', _("The payment was declined or failed."))
-            self._set_error(_("Your payment failed. Reason: %s", error_message))
+            self._handle_failure_status(data)
+        else:
+            self._set_canceled()
 
-        else: self._set_canceled()
+
+    def _handle_success_status(self, data):
+        if self.state in ('done',):
+            return
+
+        self._apply_discount_if_present(data)
+        self._update_amount_if_present(data)
+        self._set_done()
+
+
+    def _apply_discount_if_present(self, data):
+        discount = float(data.get('discount', 0))
+        if discount <= 0:
+            return
+
+        sale_order_id = data.get('udf1')
+        if not sale_order_id:
+            _logger.warning("Sale Order id not found in request session")
+            return
+
+        sale_order = request.env['sale.order'].sudo().browse(int(sale_order_id))
+        self.apply_fixed_discount_to_order_lines(sale_order, discount)
+
+
+    def _update_amount_if_present(self, data):
+        net_amount_debit = data.get('net_amount_debit')
+        if net_amount_debit:
+            self.write({'amount': float(net_amount_debit)})
+
+
+    def _handle_failure_status(self, data):
+        error_message = data.get('error_Message', _("The payment was declined or failed."))
+        self._set_error(_("Your payment failed. Reason: %s", error_message))
+
 
     def _payu_verify_return_sign(self, data):
         """ Verifies the hash value received in PayU response data

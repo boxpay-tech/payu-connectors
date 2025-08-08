@@ -1,12 +1,13 @@
 # payment_payu/controllers/main.py
 import logging
-import pprint
-from werkzeug.urls import url_join
 
 from odoo import http
 from odoo.http import request
 
 _logger = logging.getLogger(__name__)
+
+
+PAYMENT_TRANSACTION_MODEL = 'payment.transaction'
 
 class PayUController(http.Controller):
     _webhook_url = '/payment/payu/webhook'
@@ -18,7 +19,7 @@ class PayUController(http.Controller):
         _logger.info("PayU Webhook received: %s", kwargs)
 
         # Retrieve the transaction based on the reference included in the return url.
-        tx_sudo = request.env['payment.transaction'].sudo()._get_tx_from_notification_data(
+        tx_sudo = request.env[PAYMENT_TRANSACTION_MODEL].sudo()._get_tx_from_notification_data(
             'payu', kwargs
         )
 
@@ -31,7 +32,7 @@ class PayUController(http.Controller):
         _logger.info("PayU redirection response received: %s", kwargs)
 
         # Retrieve the transaction based on the reference included in the return url.
-        tx_sudo = request.env['payment.transaction'].sudo()._get_tx_from_notification_data(
+        tx_sudo = request.env[PAYMENT_TRANSACTION_MODEL].sudo()._get_tx_from_notification_data(
             'payu', kwargs
         )
 
@@ -44,7 +45,7 @@ class PayUController(http.Controller):
         tx_ref = request.session.get('last_txnid')
 
         if tx_ref:
-            tx = request.env['payment.transaction'].sudo().search([('reference', '=', tx_ref)], limit=1)
+            tx = request.env[PAYMENT_TRANSACTION_MODEL].sudo().search([('reference', '=', tx_ref)], limit=1)
             if tx and tx.state not in ('done', 'cancel'):
                 tx._set_canceled()
 

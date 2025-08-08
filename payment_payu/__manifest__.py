@@ -14,6 +14,8 @@
         'views/payment_provider_views.xml',
         'data/payment_provider_data.xml',
     ],
+    'test': ['tests/test_payment_provider.py',
+             'tests/test_payment_transaction.py'],
     'post_init_hook': 'post_init_hook',
     'uninstall_hook': 'uninstall_hook',
     'license': 'LGPL-3',
