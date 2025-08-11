@@ -130,6 +130,8 @@ class PaymentTransaction(models.Model):
             trn_ref_id = invoice.name
             cart_details = self.get_invoice_cart_details(invoice)
 
+        curl = f'/payment/payu/cancel?txn_ref={self.reference}'
+
         payu_values = {
             'api_version': 14,
             'key': provider.payu_merchant_key,
@@ -143,17 +145,21 @@ class PaymentTransaction(models.Model):
             'phone': billing_partner.phone,
             'surl': url_join(base_url, '/payment/payu/process'),
             'furl': url_join(base_url, '/payment/payu/process'),
-            'curl': url_join(base_url, '/payment/payu/cancel'),
+            'curl': url_join(base_url, curl),
             'udf1': trn_ref_id, 'udf2': self.reference, 'udf3': '', 'udf4': '', 'udf5': 'odoo',
         }
 
         payu_values['hash'] = provider._payu_generate_sign('PAYMENT_HASH_PARAMS', payu_values)
-        payment_dns = 'test.payu.in' if provider.state == 'test' else 'secure.payu.in'
+        
+        payment_dns = self._get_payment_dns(provider)
+
         payu_values['action_url'] = f'https://{payment_dns}/_payment'
 
-        request.session['last_txnid'] = self.reference
-
         return payu_values
+
+    def _get_payment_dns(self, provider):
+        payment_dns = 'test.payu.in' if provider.state == 'test' else 'secure.payu.in'
+        return payment_dns    
 
     def _get_tx_from_notification_data(self, provider_code, notification_data):
         """ Override of payment to find the transaction based on custom data.
@@ -312,8 +318,6 @@ class PaymentTransaction(models.Model):
         """Override of payment to process the transaction based on custom data."""
         if self.provider_code != 'payu':
             return
-
-        pprint.pprint("###### PAYU Notification START ######")
 
         if data is None:
             self._set_canceled()

@@ -40,13 +40,34 @@ class PayUController(http.Controller):
 
         return request.redirect('/payment/status')
 
-    @http.route(_cancel_url, type='http', auth='public', methods=['GET', 'POST'], csrf=False)
+    @http.route(_cancel_url, type='http', auth='public', methods=['GET', 'POST'], csrf=False, save_session=False)
     def payu_cancel(self, **kwargs):
-        tx_ref = request.session.get('last_txnid')
+        """Cancel the transaction only if it is in a non-terminal state."""
 
-        if tx_ref:
-            tx = request.env[PAYMENT_TRANSACTION_MODEL].sudo().search([('reference', '=', tx_ref)], limit=1)
-            if tx and tx.state not in ('done', 'cancel'):
-                tx._set_canceled()
+        txn_ref = kwargs.get('txn_ref')
+        
+        TERMINAL_STATES = ('done', 'cancel', 'error', 'authorized')
 
+        if not txn_ref:
+            _logger.warning("PayU Cancel URL missing txn_ref parameter.")
+            return request.redirect('/payment/status')
+
+        tx = request.env[PAYMENT_TRANSACTION_MODEL].sudo().search(
+            [('reference', '=', txn_ref)], limit=1
+        )
+
+        if not tx:
+            _logger.warning("No transaction found for reference %s", txn_ref)
+            return request.redirect('/payment/status')
+
+        if tx.state in TERMINAL_STATES:
+            _logger.info(
+                "Transaction %s is in terminal state '%s'. Cancel skipped.",
+                txn_ref, tx.state
+            )
+            return request.redirect('/payment/status')
+
+        # Only cancel if in non-terminal state
+        _logger.info("Canceling transaction %s (current state: %s)", txn_ref, tx.state)
+        tx._set_canceled()
         return request.redirect('/payment/status')
