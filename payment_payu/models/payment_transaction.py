@@ -359,7 +359,7 @@ class PaymentTransaction(models.Model):
 
 
     def _update_amount_if_present(self, data):
-        net_amount_debit = data.get('net_amount_debit')
+        net_amount_debit = data.get('amount')
         if net_amount_debit:
             self.write({'amount': float(net_amount_debit)})
 

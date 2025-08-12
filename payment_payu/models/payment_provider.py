@@ -3,6 +3,7 @@ import hashlib
 import logging
 import pprint
 import json
+import re
 
 import requests
 from urllib.parse import parse_qsl
@@ -207,6 +208,10 @@ class PayUPaymentProvider(models.Model):
 
 
         hash_string = '|'.join(hash_string_parts)
+
+        # Remove any leading/trailing empty segments, spaces, or pipes
+        hash_string = re.sub(r'^[\s|]+|[\s|]+$', '', hash_string)
+        
         _logger.info('Hash String: ' + hash_string)
         return hashlib.sha512(hash_string.encode('utf-8')).hexdigest()
     

@@ -120,6 +120,7 @@ PAYMENT_HASH_PARAMS = [
 ]
 
 PAYMENT_REVERSE_HASH_PARAMS = [
+    'additionalCharges',
     '_SALT_',
     'status',
     'udf10',
