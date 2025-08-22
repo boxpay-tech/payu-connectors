@@ -124,11 +124,13 @@ class PaymentTransaction(models.Model):
             order = request.website.sale_get_order()
             trn_ref_id = order.id
             cart_details = self.get_cart_details(order)
+            udf3 = 'website'
         else:
             # Backend invoice flow
             invoice = self.invoice_ids and self.invoice_ids[0]
             trn_ref_id = invoice.name
             cart_details = self.get_invoice_cart_details(invoice)
+            udf3 = 'invoice'
 
         curl = f'/payment/payu/cancel?txn_ref={self.reference}'
 
@@ -146,7 +148,7 @@ class PaymentTransaction(models.Model):
             'surl': url_join(base_url, '/payment/payu/process'),
             'furl': url_join(base_url, '/payment/payu/process'),
             'curl': url_join(base_url, curl),
-            'udf1': trn_ref_id, 'udf2': self.reference, 'udf3': '', 'udf4': '', 'udf5': 'odoo',
+            'udf1': trn_ref_id, 'udf2': self.reference, 'udf3': udf3, 'udf4': '', 'udf5': 'odoo',
         }
 
         payu_values['hash'] = provider._payu_generate_sign('PAYMENT_HASH_PARAMS', payu_values)
@@ -155,7 +157,7 @@ class PaymentTransaction(models.Model):
 
         payu_values['action_url'] = f'https://{payment_dns}/_payment'
 
-        return payu_values
+        return payu_values  
 
     def _get_payment_dns(self, provider):
         payment_dns = 'test.payu.in' if provider.state == 'test' else 'secure.payu.in'
@@ -184,62 +186,75 @@ class PaymentTransaction(models.Model):
                 "PayU: " + _("No transaction found matching reference %s.", reference)
             )
         return tx
-
-    def apply_fixed_discount_to_order_lines(self, sale_order, fixed_discount_amount):
+    
+    def apply_global_discount_to_invoice(self, invoice, discount_amount):
         """
-        Apply a fixed discount amount distributed proportionally to all sale.order lines.
-        The discount is set as a percentage on each line's unit price.
-        
+        Apply a global discount to the invoice as a negative invoice line with zero tax.
+        :param invoice: record of account.move (invoice)
+        :param discount_amount: discount amount (float, positive)
+        """
+        # Find or create the discount product (make sure it's configured in Odoo)
+        discount_product = self.env['product.product'].search([('name', '=', 'PG Discount')], limit=1)
+        if not discount_product:
+            discount_product = self.env['product.product'].create({
+                'name': 'PG Discount',
+                'type': 'service',
+                'sale_ok': True,
+                'list_price': 0.0,
+            })
+
+        # Remove previous discount lines to avoid duplicates
+        previous_discount_lines = invoice.invoice_line_ids.filtered(lambda l: l.product_id == discount_product)
+        previous_discount_lines.unlink()
+
+        # Prepare zero taxes
+        zero_taxes = self.env['account.tax']
+
+        # Add negative invoice line for discount with no taxes
+        self.env['account.move.line'].create({
+            'move_id': invoice.id,
+            'product_id': discount_product.id,
+            'name': 'Global Discount',
+            'quantity': 1,
+            'price_unit': -abs(discount_amount),  # Negative value
+            'tax_ids': [(6, 0, zero_taxes.ids)],  # No taxes applied
+        })
+
+    def apply_global_discount_to_order(self, sale_order, discount_amount):
+        """
+        Apply a global discount to the sale order as a negative order line with zero tax.
         :param sale_order: record of sale.order
-        :param fixed_discount_amount: fixed discount amount (float)
+        :param discount_amount: discount amount (float, positive)
         """
+        # Find or create the discount product (make sure it's configured in Odoo)
+        discount_product = self.env['product.product'].search([('name', '=', 'PG Discount')], limit=1)
+        if not discount_product:
+            discount_product = self.env['product.product'].create({
+                'name': 'PG Discount',
+                'type': 'service',
+                'sale_ok': True,
+                'list_price': 0.0,
+            })
+        
+        # Remove previous discount lines to avoid duplicates
+        previous_discount_lines = sale_order.order_line.filtered(lambda l: l.product_id == discount_product)
+        previous_discount_lines.unlink()
+        
+        # Prepare zero taxes
+        zero_taxes = self.env['account.tax']
+        
+        # Add negative order line for discount with no taxes
+        sale_order.order_line.create({
+            'order_id': sale_order.id,
+            'product_id': discount_product.id,
+            'name': 'Global Discount',
+            'product_uom_qty': 1,
+            'price_unit': -abs(discount_amount),  # Negative value
+            'tax_id': [(6, 0, zero_taxes.ids)],    # No taxes applied
+        })
 
-        currency = sale_order.pricelist_id.currency_id
-        rounding = currency.rounding
-
-        # Calculate total amounts - untaxed and tax
-        total_untaxed = sale_order.amount_untaxed
-        total_tax = sale_order.amount_tax
-        total_with_tax = total_untaxed + total_tax
-
-        # Calculate proportion of tax in the total amount
-        tax_ratio = total_tax / total_with_tax  # fraction of final amount that is tax
-
-        # Remove tax proportion from fixed discount to get net discount applicable on untaxed base
-        fixed_discount_amount = fixed_discount_amount * (1 - tax_ratio)
-
-        # Calculate total price before discount on all lines (price_unit * qty)
-        total_amount = sum(line.price_unit * line.product_uom_qty for line in sale_order.order_line)
-
-        if total_amount <= 0:
-            # Avoid division by zero if no lines or zero amount
-            return
-
-        distributed_amount = 0.0
-
-        for line in sale_order.order_line[:-1]:
-            line_subtotal = line.price_unit * line.product_uom_qty
-            proportion = line_subtotal / total_amount
-            line_discount_amount = float_round(fixed_discount_amount * proportion, precision_rounding=rounding)
-
-            # Calculate discount percentage for the line (no rounding here)
-            discount_pct = (line_discount_amount / line_subtotal) * 100 if line_subtotal > 0 else 0.0
-            line.discount = discount_pct
-
-            distributed_amount += line_discount_amount
-
-        # Calculate remainder discount for last line
-        remaining_discount_amount = fixed_discount_amount - distributed_amount
-        last_line = sale_order.order_line[-1]
-        last_line_subtotal = last_line.price_unit * last_line.product_uom_qty
-
-        # Calculate discount percentage for last line
-        last_discount_pct = (remaining_discount_amount / last_line_subtotal) * 100 if last_line_subtotal > 0 else 0.0
-        last_line.discount = float_round(last_discount_pct, precision_rounding=rounding)
-
-        # Recompute order totals (usually automatic, but call if needed)
+        # Recompute order totals
         sale_order._compute_amounts()
-
 
     def send_capture_request(self, amount_to_capture=None):
         """
@@ -354,14 +369,29 @@ class PaymentTransaction(models.Model):
             _logger.warning("Sale Order id not found in request session")
             return
 
-        sale_order = request.env['sale.order'].sudo().browse(int(sale_order_id))
-        self.apply_fixed_discount_to_order_lines(sale_order, discount)
+        udf3 = data.get('udf3')
+
+        if udf3 == 'website':
+            sale_order = request.env['sale.order'].sudo().browse(int(sale_order_id))
+            self.apply_global_discount_to_order(sale_order, discount)
+        else:
+            # Assuming invoice is linked by name/reference stored in udf1
+            invoice = request.env['account.move'].sudo().search([('name', '=', sale_order_id)], limit=1)
+            if not invoice:
+                _logger.warning(f"Invoice {sale_order_id} not found in request session")
+                return
+            self.apply_global_discount_to_invoice(invoice, discount)
 
 
     def _update_amount_if_present(self, data):
-        net_amount_debit = data.get('amount')
+        additional_charges = data.get('additionalCharges')
+        net_amount_debit = data.get('net_amount_debit')
+
+        # Consider additionalCharges as zero if missing or None or empty string
+        additional_charges_value = float(additional_charges) if additional_charges not in (None, '', 'null') else 0.0
+
         if net_amount_debit:
-            self.write({'amount': float(net_amount_debit)})
+            self.write({'amount': float(net_amount_debit) - additional_charges_value})
 
 
     def _handle_failure_status(self, data):
