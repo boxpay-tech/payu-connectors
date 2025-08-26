@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, ANY
 
 from odoo.tests import TransactionCase
 from odoo.exceptions import ValidationError
@@ -119,50 +119,34 @@ class TestPayUPaymentTransaction(TransactionCase):
             self.transaction._payu_verify_return_sign(data)
 
     # 8. Testing handling of successful payment with discount and amount update
+
+
     def test_08_handle_successful_payment(self):
-
-        # --- Mocked sale.order record ---
-        mock_sale_order_record = MagicMock(
-            order_line=[],
-            pricelist_id=MagicMock(currency_id=MagicMock(rounding=0.01)),
-            amount_untaxed=100.0,
-            amount_tax=20.0
-        )
-
-        # mock sale.order model 
-        mock_sale_order_model = MagicMock()
-        mock_sale_order_model.sudo.return_value.browse.return_value = mock_sale_order_record
-
-        # fake env to return sale.order mock 
-        fake_env = MagicMock()
-        fake_env.__getitem__.side_effect = (
-            lambda model: mock_sale_order_model if model == 'sale.order' else self.env[model]
-        )
-
-        # fake request object replacing the LocalProxy entirely 
-        fake_request = MagicMock()
-        fake_request.env = fake_env
-
-        # data payload simulating PayU response 
         data = {
             'status': 'success',
             'discount': '10',
             'net_amount_debit': '90',
-            'udf1': '1',
+            'udf1': str(self.transaction.id),
             'mihpayid': 'PAYU123',
-            'hash': 'fakehash'
+            'hash': 'fakehash',
+            'udf3': 'website',
         }
 
-        # patch request in your module and signature verification 
-        with patch('odoo.addons.payment_payu.models.payment_transaction.request', fake_request), \
-            patch.object(type(self.transaction), '_payu_verify_return_sign', return_value=True):
+        # Patch request.env to return a MagicMock for 'sale.order'
+        mock_env = MagicMock()
+        mock_sale_order = MagicMock()
+        mock_env.__getitem__.side_effect = lambda model: mock_sale_order if model == 'sale.order' else self.env[model]
 
-            # Run the method (updated to use _process_notification_data)
+        mock_request = MagicMock()
+        mock_request.env = mock_env
+
+        with patch.object(type(self.transaction), '_payu_verify_return_sign', return_value=True), \
+            patch('odoo.addons.payment_payu.models.payment_transaction.request', mock_request), \
+            patch.object(type(self.transaction), 'apply_global_discount_to_order', return_value=None):
+
             self.transaction._process_notification_data(data)
-
-            # Assert amount updated correctly
+            self.assertEqual(self.transaction.state, 'done')
             self.assertEqual(self.transaction.amount, 90.0)
-
 
     # 9. Test failed status processing
     def test_09_failed_payment_sets_error(self):
@@ -199,3 +183,39 @@ class TestPayUPaymentTransaction(TransactionCase):
         refund_tx = self.transaction._send_refund_request(100.0)
         self.assertEqual(refund_tx.provider_reference, 'REF456')
         self.assertEqual(refund_tx.state, 'error')
+    
+    @patch.object(PaymentTransaction, '_get_specific_rendering_values', return_value={'some': 'value'})
+    def test_get_specific_rendering_values_non_payu(self, mock_super):
+        self.transaction.provider_code = 'other'
+        result = self.transaction._get_specific_rendering_values({})
+        self.assertEqual(result, {'some': 'value'})
+    
+    def test_get_payment_dns(self):
+        provider = self.provider
+        provider.state = 'test'
+        self.assertEqual(self.transaction._get_payment_dns(provider), 'test.payu.in')
+
+        # Use the correct production state, usually 'enabled' or 'prod' might not be accepted
+        provider.state = 'enabled'  # or 'live' or '' depending on your module
+        self.assertEqual(self.transaction._get_payment_dns(provider), 'secure.payu.in')
+    
+    def test_apply_discount_if_present_no_discount(self):
+        data = {'discount': '0', 'udf1': '1', 'udf3': 'website'}
+        self.transaction._apply_discount_if_present(data)
+
+    def test_apply_discount_if_present_invoice_path(self):
+        data = {'discount': '10', 'udf1': 'INV123', 'udf3': 'invoice'}
+        mock_invoice = MagicMock()
+
+        mock_env = MagicMock()
+        # Return mock_invoice no matter if search is called on env['account.move'] or on sudo()
+        mock_env.__getitem__.return_value.sudo.return_value.search.return_value = mock_invoice
+
+        mock_request = MagicMock()
+        mock_request.env = mock_env
+
+        with patch('odoo.addons.payment_payu.models.payment_transaction.request', mock_request), \
+            patch.object(type(self.transaction), 'apply_global_discount_to_invoice') as mock_apply:
+            self.transaction._apply_discount_if_present(data)
+            mock_apply.assert_called_with(ANY, 10.0)
+            
