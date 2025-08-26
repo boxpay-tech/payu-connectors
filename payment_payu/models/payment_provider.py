@@ -22,14 +22,10 @@ class PayUPaymentProvider(models.Model):
         selection_add=[('payu', 'PayU')], ondelete={'payu': 'set default'})
     
     
-    payu_merchant_key = fields.Char(
-        string='PayU Merchant Key', 
-        groups='base.group_system',
+    payu_credential_ids = fields.One2many(
+        'payu.credential', 'provider_id', string='PAYU CREDENTIALS'
     )
-    payu_merchant_salt = fields.Char(
-        string='PayU Merchant Salt', 
-        groups='base.group_system',
-    )
+    
     payu_credentials_saved = fields.Boolean(string="PayU Credentials Saved", default=False)
     #=== ACTION METHODS ===#
 
