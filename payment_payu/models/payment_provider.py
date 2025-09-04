@@ -9,7 +9,7 @@ import requests
 from urllib.parse import parse_qsl
 
 from odoo import _, api, fields, models
-from odoo.exceptions import ValidationError
+from odoo.exceptions import ValidationError, RedirectWarning
 
 from odoo.addons.payment_payu import const
 
@@ -22,15 +22,10 @@ class PayUPaymentProvider(models.Model):
         selection_add=[('payu', 'PayU')], ondelete={'payu': 'set default'})
     
     
-    payu_merchant_key = fields.Char(
-        string='PayU Merchant Key', 
-        groups='base.group_system',
+    payu_credential_ids = fields.One2many(
+        'payu.credential', 'provider_id', string='PAYU CREDENTIALS'
     )
-    payu_merchant_salt = fields.Char(
-        string='PayU Merchant Salt', 
-        groups='base.group_system',
-    )
-    payu_credentials_saved = fields.Boolean(string="PayU Credentials Saved", default=False)
+    
     #=== ACTION METHODS ===#
 
     def action_payu_signup_redirect(self):
@@ -63,25 +58,7 @@ class PayUPaymentProvider(models.Model):
             'url': authorization_url,
             'target': 'self',
         }
-
-    def action_payu_reset_account(self):
-        """ Reset the PayU OAuth account.
-
-        Note: self.ensure_one()
-
-        :return: None
-        """
-        self.ensure_one()
-
-        return self.write({
-            'payu_merchant_key': None,
-            'payu_merchant_salt': None,
-            'state': 'disabled',
-            'is_published': False,
-            'payu_credentials_saved' : False
-        })
-
-
+    
     #=== COMPUTE METHODS ===#
 
     def _compute_feature_support_fields(self):
@@ -111,15 +88,6 @@ class PayUPaymentProvider(models.Model):
         if self.code != 'payu':
             return default_codes
         return const.DEFAULT_PAYMENT_METHOD_CODES
-
-
-    # @api.constrains('code', 'state', 'payu_merchant_key', 'payu_merchant_salt')
-    def _check_payu_credentials(self):
-        """Validate that PayU merchant credentials are filled."""
-        self.ensure_one()
-        if self.code == 'payu' and (self.state == 'enabled' or self.state == 'test'):
-            if not self.payu_merchant_key or not self.payu_merchant_salt:
-                raise ValidationError(_("PayU: Please provide both Merchant Key and Salt."))
 
     def _get_payu_urls(self):
         """ Return the PayU URL based on the provider's state. """
@@ -186,41 +154,46 @@ class PayUPaymentProvider(models.Model):
             ))
 
         return json.loads(response.text)
+    
+    def _payu_generate_sign(self, hash_param_const_name, values, currency):
+        """
+        Generate the PayU signature (hash) based on currency-specific credentials.
 
-
-    def _payu_generate_sign(self, hash_param_const_name, values):
-        """ Generate the PayU signature (hash).
-        
+        :param str hash_param_const_name: The constant name specifying hash param keys.
         :param dict values: The values used to generate the signature.
-        :param bool is_return_sign: Whether the signature is for the return URL,
-                                    as PayU uses a different order of fields.
-        :return: The generated signature.
+        :param res.currency currency: The currency record to select credentials for.
+        :return: The generated signature as a hex string.
         :rtype: str
         """
         def safe_str(val):
             return str(val or '').strip()
 
+        # Fetch credentials for the given currency
+        credential = self.payu_credential_ids.filtered(lambda cred: cred.currency_id == currency)
+        
+        if not credential:
+            raise ValidationError(_("No PayU credentials found for currency %s.") % currency.name)
+
+        _logger.info(f"Fetched PayU credentials for currency {currency.name}: Merchant Key = {credential.merchant_key}, Merchant Salt = {credential.merchant_salt}");
+        
+        salt_value = credential.merchant_salt
+
         hash_param_keys = getattr(const, hash_param_const_name, [])
 
         hash_string_parts = []
         for hash_param in hash_param_keys:
-            hash_string_parts.append(self.payu_merchant_salt if hash_param == '_SALT_' else safe_str(values.get(hash_param)))
-
+            if hash_param == '_SALT_':
+                hash_string_parts.append(salt_value)
+            else:
+                hash_string_parts.append(safe_str(values.get(hash_param)))
 
         hash_string = '|'.join(hash_string_parts)
-
-        # Remove any leading/trailing empty segments, spaces, or pipes
         hash_string = re.sub(r'^[\s|]+|[\s|]+$', '', hash_string)
-        
-        _logger.info('Hash String: ' + hash_string)
+
+        _logger.info('Hash String for currency %s: %s', currency.name, hash_string)
+
         return hashlib.sha512(hash_string.encode('utf-8')).hexdigest()
     
     def action_save_payu_credentials(self):
         self.ensure_one()
-        self._check_payu_credentials()
-        self.write({
-            'payu_merchant_key': self.payu_merchant_key,
-            'payu_merchant_salt': self.payu_merchant_salt,
-            'payu_credentials_saved': True,  
-        })
         return True
