@@ -8,6 +8,7 @@
             <input type="hidden" name="productinfo" t-att-value="productinfo"/>
             <input type="hidden" name="firstname" t-att-value="firstname"/>
             <input type="hidden" name="email" t-att-value="email"/>
+            <input type="hidden" name="user_token" t-att-value="user_token"/>
             <input type="hidden" name="phone" t-att-value="phone"/>
             <input type="hidden" name="surl" t-att-value="surl"/>
             <input type="hidden" name="furl" t-att-value="furl"/>

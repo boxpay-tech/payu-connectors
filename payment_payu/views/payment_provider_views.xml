@@ -38,18 +38,10 @@
 
                 <group invisible="code != 'payu' or state == 'disabled'">
                     <field name="payu_credential_ids" mode="list,form" options="{'list_view_ref': 'payment_payu.view_payu_credential_list', 'form_view_ref': 'payment_payu.view_payu_credential_form'}"/>
+                    
+                    <!-- Save Credentials button -->
+                    <button string="Save Credentials" type="object" name="action_save_payu_credentials" class="btn-primary" />
                 </group>
-
-                <!-- Commented out old single credentials UI (optional) -->
-                <!--
-                <group name="payu_credentials" invisible="code != 'payu' or state == 'disabled' or not payu_credentials_saved">
-                    <div class="alert alert-info" role="alert">
-                        This provider is connected with your PayU account.
-                    </div>
-                    <field name="payu_merchant_key" readonly="True" />
-                    <button string="Disconnect" type="object" name="action_payu_reset_account" class="btn-secondary" />
-                </group>
-                -->
 
                 <group name="payu_sign_up" string="Register with PayU" invisible="code != 'payu' or state == 'disabled'">
                     <div>New to PayU? Click on below button to start accepting payments using PayU!</div>

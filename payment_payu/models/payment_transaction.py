@@ -96,15 +96,26 @@ class PaymentTransaction(models.Model):
         provider = self.provider_id
         base_url = provider.get_base_url()
 
-        # --- FINAL ROBUST DATA FETCH ---
-        # Instead of getting 'billing_partner', we get the ID and fetch the record ourselves.
+        currency = self.currency_id
+
+        # Fetch the PayU credential record for this provider and currency
+        credential = self.env['payu.credential'].search([
+            ('provider_id', '=', provider.id),
+            ('currency_id', '=', currency.id)
+        ], limit=1)
+        
+
+        if not credential:
+            raise ValidationError(_("PayU: No credentials configured for currency %s.") % currency.name)
+
+        payu_key = credential.merchant_key
+
         partner_id = processing_values.get('partner_id')
         if not partner_id:
             raise ValidationError("PayU: " + _("A customer is required to proceed with the payment."))
 
         billing_partner = self.env['res.partner'].browse(partner_id)
 
-        # --- Validation Block ---
         required_fields = {
             'name': billing_partner.name,
             'email': billing_partner.email,
@@ -118,15 +129,13 @@ class PaymentTransaction(models.Model):
                     ', '.join(missing_fields).title()
                 )
             )
-        
+
         if hasattr(request, 'website') and request.website:
-            # Online website sale flow
             order = request.website.sale_get_order()
             trn_ref_id = order.id
             cart_details = self.get_cart_details(order)
             udf3 = 'website'
         else:
-            # Backend invoice flow
             invoice = self.invoice_ids and self.invoice_ids[0]
             trn_ref_id = invoice.name
             cart_details = self.get_invoice_cart_details(invoice)
@@ -136,7 +145,7 @@ class PaymentTransaction(models.Model):
 
         payu_values = {
             'api_version': 14,
-            'key': provider.payu_merchant_key,
+            'key': payu_key,
             'txnid': str(uuid.uuid4()),
             'amount': f"{self.amount:.2f}",
             'productinfo': 'Odoo product',
@@ -151,13 +160,15 @@ class PaymentTransaction(models.Model):
             'udf1': trn_ref_id, 'udf2': self.reference, 'udf3': udf3, 'udf4': '', 'udf5': 'odoo',
         }
 
-        payu_values['hash'] = provider._payu_generate_sign('PAYMENT_HASH_PARAMS', payu_values)
-        
+        payu_values['hash'] = provider._payu_generate_sign('PAYMENT_HASH_PARAMS', payu_values, currency)
+
         payment_dns = self._get_payment_dns(provider)
 
         payu_values['action_url'] = f'https://{payment_dns}/_payment'
 
-        return payu_values  
+        _logger.debug(f"Prepared PayU payment values: {payu_values}")
+
+        return payu_values
 
     def _get_payment_dns(self, provider):
         payment_dns = 'test.payu.in' if provider.state == 'test' else 'secure.payu.in'
@@ -295,16 +306,26 @@ class PaymentTransaction(models.Model):
             return refund_tx
 
         provider = self.provider_id
+        currency = self.currency_id
+        
+        # Fetch the PayU credential record for this provider and currency
+        credential = self.env['payu.credential'].search([
+            ('provider_id', '=', provider.id),
+            ('currency_id', '=', currency.id)
+        ], limit=1)
+        
+        if not credential:
+            raise ValidationError(_("PayU: No credentials configured for currency %s.") % currency.name)
 
         values = {
-            "key": provider.payu_merchant_key,
+            "key": credential.merchant_key,
             "command": "cancel_refund_transaction",
             "var1": self.provider_reference,
             "var2": refund_tx.reference,
             "var3": amount_to_refund,
         }
 
-        hash = provider._payu_generate_sign("REFUND_HASH_PARAMS", values)
+        hash = provider._payu_generate_sign("REFUND_HASH_PARAMS", values, currency)
         data = {**values, 'hash': hash}
 
         url_host = "test.payu.in" if provider.state == 'test' else "info.payu.in";
@@ -412,9 +433,18 @@ class PaymentTransaction(models.Model):
         if not returned_hash: raise ValidationError(_("PayU: Received a response with no hash."))
 
         provider = self.provider_id
-        sign_values = {**data, 'key': provider.payu_merchant_key}
+        currency = self.currency_id
+        
+        credential = self.env['payu.credential'].search([
+            ('provider_id', '=', provider.id),
+            ('currency_id', '=', currency.id)
+        ], limit=1)
+        
+        _logger.error(f"Fetched PayU credentials for currency {currency.name}")
+        
+        sign_values = {**data, 'key': credential.merchant_key}
 
-        calculated_hash = provider._payu_generate_sign("PAYMENT_REVERSE_HASH_PARAMS", sign_values)
+        calculated_hash = provider._payu_generate_sign("PAYMENT_REVERSE_HASH_PARAMS", sign_values, currency)
 
         if calculated_hash.lower() != returned_hash.lower():
             _logger.warning("PayU: Tampered payment notification for tx %s. Hash mismatch.", self.reference)
