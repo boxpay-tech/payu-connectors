@@ -5,6 +5,8 @@ import json
 import uuid
 from werkzeug.urls import url_join
 
+import requests
+
 from odoo import _, api, fields, models
 from odoo.http import request
 from odoo.exceptions import ValidationError
@@ -379,6 +381,151 @@ class PaymentTransaction(models.Model):
         self._update_amount_if_present(data)
         self._set_done()
 
+        # Call helper to generate invoice and post to PayU
+        sale_order_id = data.get('udf1')
+        if sale_order_id:
+            self.generate_sales_order_pdf_and_post_to_payu(data)
+        else:
+            _logger.warning("Sale Order ID not found in payment data; cannot generate or post invoice.")
+        
+    def generate_sales_order_pdf_and_post_to_payu(self, data):
+        sale_order_id = data.get('udf1')
+        sale_order = self.env['sale.order'].browse(int(sale_order_id))
+        if not sale_order.exists():
+            _logger.warning(f"Sale order with ID {sale_order_id} not found.")
+            return
+
+        # Call update_udf_invoice_id first and check if successful
+        update_successful = self.update_udf_invoice_id(data, sale_order)
+        if update_successful:
+            self.upload_invoice(data, sale_order)
+        else:
+            _logger.warning(f"Invoice update failed for sale order {sale_order.name}, skipping invoice upload.")
+
+
+    def update_udf_invoice_id(self, data, sale_order):
+        txnid = data.get('txnid')
+        invoiceid = sale_order.name
+
+        provider = self.provider_id
+        currency = self.currency_id
+
+        # Fetch the PayU credential record for this provider and currency
+        credential = self.env['payu.credential'].search([
+            ('provider_id', '=', provider.id),
+            ('currency_id', '=', currency.id)
+        ], limit=1)
+
+        values = {
+            'key': credential.merchant_key,
+            'command': 'udf_update',
+            'var1': txnid,
+            'var6': invoiceid,
+        }
+        hash_ = provider._payu_generate_sign("UPDATE_INVOICE_ID_HASH_PARAMS", values, currency)
+        data = {**values, 'hash': hash_}
+
+        url_host = "test.payu.in" if provider.state == 'test' else "info.payu.in"
+        url = f'https://{url_host}/merchant/postservice.php'
+
+        query_params = {
+            "form": "2"
+        }
+
+        invoice_update_response = provider._payu_make_request(url, query_params=query_params, data=data)
+        _logger.info('Invoice id Update Response: %s', invoice_update_response)
+
+        # Check if update was successful
+        # Accept exact match to "UDF values updated" to mean success
+        if invoice_update_response.get('status') == 'UDF values updated':
+            message = 'Invoice Id Updated'
+            sale_order.message_post(
+                body=message,
+                message_type="notification",
+                subtype_xmlid="mail.mt_note"
+            )
+            return True
+        else:
+            message = 'Invoice Id Update Failed'
+            sale_order.message_post(
+                body=message,
+                message_type="notification",
+                subtype_xmlid="mail.mt_note"
+            )
+            return False
+            
+    def upload_invoice(self, data, sale_order):
+        provider = self.provider_id
+        currency = self.currency_id
+
+        # Fetch the PayU credential record for this provider and currency
+        credential = self.env['payu.credential'].search([
+            ('provider_id', '=', provider.id),
+            ('currency_id', '=', currency.id)
+        ], limit=1)
+
+        # Base form values
+        values = {
+            'key': credential.merchant_key,
+            'command': 'opgsp_upload_invoice_awb',
+            'var1': data.get('mihpayid'),
+            'var2': sale_order.name,
+            'var3': 'Invoice',
+            'invoice_id': sale_order.name,
+        }
+
+        # Render the PDF report content for the sale order
+        report = self.env.ref('sale.action_report_saleorder')
+        pdf_content, _ = report._render_qweb_pdf(report.id, res_ids=[sale_order.id])
+
+        # Generate the signed hash for security
+        hash_ = provider._payu_generate_sign("UPLOAD_INVOICE_HASH_PARAMS", values, currency)
+        values['hash'] = hash_
+
+        # Prepare the file dictionary with the invoice PDF
+        files = {
+            'file': (f'{sale_order.name}.pdf', pdf_content, 'application/pdf'),
+        }
+
+        url_host = "test.payu.in" if provider.state == 'test' else "info.payu.in"
+        url = f'https://{url_host}/merchant/postservice.php?form=2'
+
+        try:
+            # Send form data and file as multipart/form-data
+            response = requests.post(url, data=values, files=files, timeout=30)
+            response.raise_for_status()
+            _logger.info(f"Successfully posted sales order PDF {sale_order.name} to endpoint.")
+            _logger.info(f"Response status: {response.status_code}, body: {response.text}")
+
+            # Check if response contains "00" indicating success
+            if "00" in response.text:
+                message = "Invoice Uploaded Successfully"
+            else:
+                message = f"Invoice Uploading Failed. Response: {response.text}"
+
+            # Post message to sale order chatter timeline
+            sale_order.message_post(
+                body=message,
+                message_type="notification",
+                subtype_xmlid="mail.mt_note"
+            )
+
+        except requests.RequestException as e:
+            error_message = f"HTTP error posting sales order PDF {sale_order.name}: {str(e)}"
+            _logger.error(error_message)
+            sale_order.message_post(
+                body=error_message,
+                message_type="notification",
+                subtype_xmlid="mail.mt_note"
+            )
+        except Exception as e:
+            error_message = f"Unexpected error posting sales order PDF {sale_order.name}: {str(e)}"
+            _logger.error(error_message)
+            sale_order.message_post(
+                body=error_message,
+                message_type="notification",
+                subtype_xmlid="mail.mt_note"
+            )
 
     def _apply_discount_if_present(self, data):
         discount = float(data.get('discount', 0))
