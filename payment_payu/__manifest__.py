@@ -13,7 +13,8 @@
         'views/payment_payu_templates.xml',
         'views/payment_provider_views.xml',
         'data/payment_provider_data.xml',
-        'security/ir.model.access.csv'
+        'security/ir.model.access.csv',
+        'data/ir_cron_payment_transaction.xml'
     ],
     'test': ['tests/test_payment_provider.py',
              'tests/test_payment_transaction.py'],

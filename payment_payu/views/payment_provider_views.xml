@@ -69,4 +69,17 @@
             </xpath>
         </field>
     </record>
+
+    <record id="view_payment_transaction_form_inherit_settled_amount" model="ir.ui.view">
+    <field name="name">payment.transaction.form.settled.amount.inherit</field>
+    <field name="model">payment.transaction</field>
+    <field name="inherit_id" ref="payment.payment_transaction_form"/>
+    <field name="arch" type="xml">
+      <!-- Insert the field after 'Provider Reference' -->
+      <xpath expr="//field[@name='provider_reference']" position="after">
+        <field name="settled_amount"/>
+      </xpath>
+    </field>
+  </record>
+
 </odoo>

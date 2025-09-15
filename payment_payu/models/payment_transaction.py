@@ -5,6 +5,8 @@ import json
 import uuid
 from werkzeug.urls import url_join
 
+import requests
+
 from odoo import _, api, fields, models
 from odoo.http import request
 from odoo.exceptions import ValidationError
@@ -20,6 +22,11 @@ class PaymentTransaction(models.Model):
     refund_bank_reference = fields.Char(
         string="Refund Bank Reference",
         help="Bank reference number for the refund transaction"
+    )
+
+    settled_amount = fields.Float(
+        string="Settled Amount",
+        help="Amount settled for this transaction"
     )
 
     is_refund = fields.Boolean(string="Is Refund", compute="_compute_is_refund")
@@ -146,7 +153,7 @@ class PaymentTransaction(models.Model):
         payu_values = {
             'api_version': 14,
             'key': payu_key,
-            'txnid': str(uuid.uuid4()),
+            'txnid': self.reference,
             'amount': f"{self.amount:.2f}",
             'productinfo': 'Odoo product',
             'cart_details': cart_details,
@@ -449,3 +456,24 @@ class PaymentTransaction(models.Model):
         if calculated_hash.lower() != returned_hash.lower():
             _logger.warning("PayU: Tampered payment notification for tx %s. Hash mismatch.", self.reference)
             raise ValidationError(_("PayU: The response hash does not match the expected hash. The data may have been tampered with."))
+    
+    @api.model
+    def cron_send_payment_transaction_post_call(self):
+        endpoint = 'https://eokk6izxj0l9l.m.pipedream.net'  # Replace with your endpoint
+        payload = {
+            # Add the data you want to send
+            "transaction_count": "hello world"
+            # Example field: send the total count of transactions
+        }
+        try:
+            response = requests.post(endpoint, json=payload, timeout=20)
+            response.raise_for_status()
+            result = response.json()
+            # Handle response and update records as needed
+            _logger.info(f"API returned: {result}")
+            # Example: process result to update transactions
+            # for tx_data in result.get("updated", []):
+            #     tx = self.env['payment.transaction'].browse(tx_data["id"])
+            #     tx.write({"some_field": tx_data["new_value"]})
+        except Exception as e:
+            _logger.error(f"Error posting to remote API: {str(e)}")
