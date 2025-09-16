@@ -389,6 +389,18 @@ class PaymentTransaction(models.Model):
             _logger.warning("Sale Order ID not found in payment data; cannot generate or post invoice.")
         
     def generate_sales_order_pdf_and_post_to_payu(self, data):
+
+        provider = self.provider_id
+        currency = self.currency_id
+
+        credential = self.env['payu.credential'].search([
+            ('provider_id', '=', provider.id),
+            ('currency_id', '=', currency.id)
+        ], limit=1)
+
+        if not credential.cross_border_transactions :
+            return 
+        
         sale_order_id = data.get('udf1')
         sale_order = self.env['sale.order'].browse(int(sale_order_id))
         if not sale_order.exists():
