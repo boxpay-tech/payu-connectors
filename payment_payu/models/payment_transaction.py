@@ -459,21 +459,31 @@ class PaymentTransaction(models.Model):
     
     @api.model
     def cron_send_payment_transaction_post_call(self):
-        endpoint = 'https://eokk6izxj0l9l.m.pipedream.net'  # Replace with your endpoint
+        endpoint = 'https://eokk6izxj0l9l.m.pipedream.net'
         payload = {
-            # Add the data you want to send
             "transaction_count": "hello world"
-            # Example field: send the total count of transactions
         }
         try:
             response = requests.post(endpoint, json=payload, timeout=20)
             response.raise_for_status()
             result = response.json()
-            # Handle response and update records as needed
-            _logger.info(f"API returned: {result}")
-            # Example: process result to update transactions
-            # for tx_data in result.get("updated", []):
-            #     tx = self.env['payment.transaction'].browse(tx_data["id"])
-            #     tx.write({"some_field": tx_data["new_value"]})
+            # Process settlement data
+            for settlement in result.get('result', {}).get('data', []):
+                for tx_data in settlement.get('transaction', []):
+                    payu_id = tx_data.get('payuId')
+                    merchant_net_amount = float(tx_data.get('merchantNetAmount', 0))
+                    # Find the corresponding transaction record by provider_reference
+                    odoo_tx = self.env['payment.transaction'].search(
+                        [('provider_reference', '=', payu_id)], limit=1
+                    )
+                    if odoo_tx:
+                        odoo_tx.write({'settled_amount': merchant_net_amount})
+                        _logger.info(
+                            f"Updated payment.transaction {odoo_tx.id} (provider_reference={payu_id}) with settled_amount={merchant_net_amount}"
+                        )
+                    else:
+                        _logger.warning(
+                            f"Transaction with provider_reference={payu_id} not found!"
+                        )
         except Exception as e:
             _logger.error(f"Error posting to remote API: {str(e)}")
