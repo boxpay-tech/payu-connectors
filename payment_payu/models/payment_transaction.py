@@ -10,11 +10,12 @@ import requests
 from odoo import _, api, fields, models
 from odoo.http import request
 from odoo.exceptions import ValidationError
-from odoo.tools.float_utils import float_round
-
-from odoo.addons.payment_payu import const
 
 _logger = logging.getLogger(__name__)
+
+PAYU_CREDENTIAL = 'payu.credential'
+PROD_BASE_URL = 'info.payu.in'
+TEST_BASE_URL = 'test.payu.in'
 
 class PaymentTransaction(models.Model):
     _inherit = 'payment.transaction'
@@ -29,7 +30,7 @@ class PaymentTransaction(models.Model):
     @api.depends('amount')
     def _compute_is_refund(self):
         for tx in self:
-            tx.is_refund = tx.amount < 0
+            tx.is_refund = tx.amount <= 0
 
     def get_productinfo_string(self, order):
         product_names = [line.product_id.display_name for line in order.order_line]
@@ -101,7 +102,7 @@ class PaymentTransaction(models.Model):
         currency = self.currency_id
 
         # Fetch the PayU credential record for this provider and currency
-        credential = self.env['payu.credential'].search([
+        credential = self.env[PAYU_CREDENTIAL].search([
             ('provider_id', '=', provider.id),
             ('currency_id', '=', currency.id)
         ], limit=1)
@@ -173,7 +174,7 @@ class PaymentTransaction(models.Model):
         return payu_values
 
     def _get_payment_dns(self, provider):
-        payment_dns = 'test.payu.in' if provider.state == 'test' else 'secure.payu.in'
+        payment_dns = TEST_BASE_URL if provider.state == 'test' else 'secure.payu.in'
         return payment_dns    
 
     def _get_tx_from_notification_data(self, provider_code, notification_data):
@@ -311,7 +312,7 @@ class PaymentTransaction(models.Model):
         currency = self.currency_id
         
         # Fetch the PayU credential record for this provider and currency
-        credential = self.env['payu.credential'].search([
+        credential = self.env[PAYU_CREDENTIAL].search([
             ('provider_id', '=', provider.id),
             ('currency_id', '=', currency.id)
         ], limit=1)
@@ -327,10 +328,10 @@ class PaymentTransaction(models.Model):
             "var3": amount_to_refund,
         }
 
-        hash = provider._payu_generate_sign("REFUND_HASH_PARAMS", values, currency)
-        data = {**values, 'hash': hash}
+        hash_ = provider._payu_generate_sign("REFUND_HASH_PARAMS", values, currency)
+        data = {**values, 'hash': hash_}
 
-        url_host = "test.payu.in" if provider.state == 'test' else "info.payu.in";
+        url_host = TEST_BASE_URL if provider.state == 'test' else PROD_BASE_URL;
         url = f'https://{url_host}/merchant/postservice.php'
 
         query_params = {
@@ -393,7 +394,7 @@ class PaymentTransaction(models.Model):
         provider = self.provider_id
         currency = self.currency_id
 
-        credential = self.env['payu.credential'].search([
+        credential = self.env[PAYU_CREDENTIAL].search([
             ('provider_id', '=', provider.id),
             ('currency_id', '=', currency.id)
         ], limit=1)
@@ -422,8 +423,7 @@ class PaymentTransaction(models.Model):
         provider = self.provider_id
         currency = self.currency_id
 
-        # Fetch the PayU credential record for this provider and currency
-        credential = self.env['payu.credential'].search([
+        credential = self.env[PAYU_CREDENTIAL].search([
             ('provider_id', '=', provider.id),
             ('currency_id', '=', currency.id)
         ], limit=1)
@@ -437,7 +437,7 @@ class PaymentTransaction(models.Model):
         hash_ = provider._payu_generate_sign("UPDATE_INVOICE_ID_HASH_PARAMS", values, currency)
         data = {**values, 'hash': hash_}
 
-        url_host = "test.payu.in" if provider.state == 'test' else "info.payu.in"
+        url_host = TEST_BASE_URL if provider.state == 'test' else PROD_BASE_URL
         url = f'https://{url_host}/merchant/postservice.php'
 
         query_params = {
@@ -476,7 +476,6 @@ class PaymentTransaction(models.Model):
             ('currency_id', '=', currency.id)
         ], limit=1)
 
-        # Base form values
         values = {
             'key': credential.merchant_key,
             'command': 'opgsp_upload_invoice_awb',
@@ -490,11 +489,9 @@ class PaymentTransaction(models.Model):
         report = self.env.ref('sale.action_report_saleorder')
         pdf_content, _ = report._render_qweb_pdf(report.id, res_ids=[sale_order.id])
 
-        # Generate the signed hash for security
         hash_ = provider._payu_generate_sign("UPLOAD_INVOICE_HASH_PARAMS", values, currency)
         values['hash'] = hash_
 
-        # Prepare the file dictionary with the invoice PDF
         files = {
             'file': (f'{sale_order.name}.pdf', pdf_content, 'application/pdf'),
         }
@@ -503,13 +500,11 @@ class PaymentTransaction(models.Model):
         url = f'https://{url_host}/merchant/postservice.php?form=2'
 
         try:
-            # Send form data and file as multipart/form-data
             response = requests.post(url, data=values, files=files, timeout=30)
             response.raise_for_status()
             _logger.info(f"Successfully posted sales order PDF {sale_order.name} to endpoint.")
             _logger.info(f"Response status: {response.status_code}, body: {response.text}")
 
-            # Check if response contains "00" indicating success
             if "00" in response.text:
                 message = "Invoice Uploaded Successfully"
             else:
@@ -594,7 +589,7 @@ class PaymentTransaction(models.Model):
         provider = self.provider_id
         currency = self.currency_id
         
-        credential = self.env['payu.credential'].search([
+        credential = self.env[PAYU_CREDENTIAL].search([
             ('provider_id', '=', provider.id),
             ('currency_id', '=', currency.id)
         ], limit=1)

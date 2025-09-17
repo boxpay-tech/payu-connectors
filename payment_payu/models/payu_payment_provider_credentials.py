@@ -9,7 +9,7 @@ class PayUPaymentProviderCredential(models.Model):
     currency_id = fields.Many2one('res.currency', required=True, string='Currency')
     merchant_key = fields.Char('PayU Merchant Key', groups='base.group_system')
     merchant_salt = fields.Char('PayU Merchant Salt', groups='base.group_system')
-    cross_border_transactions = fields.Boolean(string="Cross Border Transactions", default=False)
+    cross_border_transactions = fields.Boolean(string="Cross Border Transactions", default=False, help="Check the box if merchant account is enabled for corss border transactions")
 
     _sql_constraints = [
         ('uniq_provider_currency', 'unique(provider_id, currency_id)', 
