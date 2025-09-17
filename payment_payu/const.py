@@ -148,6 +148,20 @@ REFUND_HASH_PARAMS = [
     '_SALT_',
 ]
 
+UPDATE_INVOICE_ID_HASH_PARAMS = [
+    'key',
+    'command',
+    'var1',
+    '_SALT_',
+]
+
+UPLOAD_INVOICE_HASH_PARAMS = [
+    'key',
+    'command',
+    'var1',
+    '_SALT_',
+]
+
 TEST_SIGN_UP_ENDPOINT= "https://onboarding.payu.in/app/account/signup"
 TEST_VALIDATE_AUTH_CODE_ENDPOINT = "https://uat-accounts.payu.in"
 TEST_MERCHANT_CREDS_ENDPOINT = "https://uat-partner.payu.in"
