@@ -6,9 +6,9 @@
         <field name="model">payu.credential</field>
         <field name="arch" type="xml">
             <list string="PayU Credentials" editable="bottom">
-                <field name="currency_id"/>
-                <field name="merchant_key" password="1"/>
-                <field name="merchant_salt" password="1"/>
+                <field name="currency_id" />
+                <field name="merchant_key" password="1" />
+                <field name="merchant_salt" password="1" />
             </list>
         </field>
     </record>
@@ -20,9 +20,9 @@
         <field name="arch" type="xml">
             <form string="PayU Credential">
                 <group>
-                    <field name="currency_id" required="1"/>
-                    <field name="merchant_key" password="1" required="1"/>
-                    <field name="merchant_salt" password="1" required="1"/>
+                    <field name="currency_id" required="1" />
+                    <field name="merchant_key" password="1" required="1" />
+                    <field name="merchant_salt" password="1" required="1" />
                 </group>
             </form>
         </field>
@@ -37,19 +37,23 @@
             <xpath expr="//page[@name='credentials']/group" position="after">
 
                 <group invisible="code != 'payu' or state == 'disabled'">
-                    <field name="payu_credential_ids" mode="list,form" options="{'list_view_ref': 'payment_payu.view_payu_credential_list', 'form_view_ref': 'payment_payu.view_payu_credential_form'}"/>
-                    
+                    <field name="payu_credential_ids" mode="list,form"
+                        options="{'list_view_ref': 'payment_payu.view_payu_credential_list', 'form_view_ref': 'payment_payu.view_payu_credential_form'}" />
+
                     <!-- Save Credentials button -->
-                    <button string="Save Credentials" type="object" name="action_save_payu_credentials" class="btn-primary" />
+                    <button string="Save Credentials" type="object"
+                        name="action_save_payu_credentials" class="btn-primary" />
                 </group>
 
-                <group name="payu_sign_up" string="Register with PayU" invisible="code != 'payu' or state == 'disabled'">
+                <group name="payu_sign_up" string="Register with PayU"
+                    invisible="code != 'payu' or state == 'disabled'">
                     <div>New to PayU? Click on below button to start accepting payments using PayU!</div>
                 </group>
 
                 <group invisible="code != 'payu' or state == 'disabled'">
                     <div>
-                        <button string="Sign Up" type="object" name="action_payu_signup_redirect" class="btn-primary" />
+                        <button string="Sign Up" type="object" name="action_payu_signup_redirect"
+                            class="btn-primary" />
                     </div>
                 </group>
 
@@ -71,15 +75,26 @@
     </record>
 
     <record id="view_payment_transaction_form_inherit_settled_amount" model="ir.ui.view">
-    <field name="name">payment.transaction.form.settled.amount.inherit</field>
-    <field name="model">payment.transaction</field>
-    <field name="inherit_id" ref="payment.payment_transaction_form"/>
-    <field name="arch" type="xml">
-      <!-- Insert the field after 'Provider Reference' -->
-      <xpath expr="//field[@name='provider_reference']" position="after">
-        <field name="settled_amount"/>
-      </xpath>
-    </field>
-  </record>
+        <field name="name">payment.transaction.form.settled.amount.inherit</field>
+        <field name="model">payment.transaction</field>
+        <field name="inherit_id" ref="payment.payment_transaction_form" />
+        <field name="arch" type="xml">
+            <!-- Insert the field after 'Provider Reference' -->
+            <xpath expr="//field[@name='provider_reference']" position="after">
+                <field name="settled_amount" />
+            </xpath>
+        </field>
+    </record>
 
+    <record id="view_payment_transaction_form_inherit_service_amount" model="ir.ui.view">
+        <field name="name">payment.transaction.form.service.amount.inherit</field>
+        <field name="model">payment.transaction</field>
+        <field name="inherit_id" ref="payment.payment_transaction_form"/>
+        <field name="arch" type="xml">
+            <!-- Insert the field after 'Provider Reference' -->
+            <xpath expr="//field[@name='settled_amount']" position="after">
+                <field name="total_service_fee" />
+            </xpath>
+        </field>
+    </record>
 </odoo>

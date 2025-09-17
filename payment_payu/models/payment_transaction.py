@@ -4,6 +4,11 @@ import pprint
 import json
 import uuid
 from werkzeug.urls import url_join
+from datetime import datetime, timezone
+
+import hmac
+import hashlib
+import base64
 
 import requests
 
@@ -27,6 +32,11 @@ class PaymentTransaction(models.Model):
     settled_amount = fields.Float(
         string="Settled Amount",
         help="Amount settled for this transaction"
+    )
+
+    total_service_fee = fields.Float(
+        string = "Total Service Fee",
+        help = "Cumulative service fee charged by PayU for this transaction"
     )
 
     is_refund = fields.Boolean(string="Is Refund", compute="_compute_is_refund")
@@ -459,12 +469,9 @@ class PaymentTransaction(models.Model):
     
     @api.model
     def cron_send_payment_transaction_post_call(self):
-        endpoint = 'https://eokk6izxj0l9l.m.pipedream.net'
-        payload = {
-            "transaction_count": "hello world"
-        }
+        endpoint = 'https://dvlpr-ptrip.free.beeceptor.com/settlements'
         try:
-            response = requests.post(endpoint, json=payload, timeout=20)
+            response = requests.get(endpoint, timeout=30)
             response.raise_for_status()
             result = response.json()
             # Process settlement data
@@ -472,12 +479,19 @@ class PaymentTransaction(models.Model):
                 for tx_data in settlement.get('transaction', []):
                     payu_id = tx_data.get('payuId')
                     merchant_net_amount = float(tx_data.get('merchantNetAmount', 0))
+                    
+                    merchant_service_fee = float(tx_data.get('merchantServiceFee', 0))
+                    merchant_service_tax = float(tx_data.get('merchantServiceTax', 0))
+
                     # Find the corresponding transaction record by provider_reference
                     odoo_tx = self.env['payment.transaction'].search(
                         [('provider_reference', '=', payu_id)], limit=1
                     )
                     if odoo_tx:
-                        odoo_tx.write({'settled_amount': merchant_net_amount})
+                        odoo_tx.write({
+                        'settled_amount': merchant_net_amount,
+                        'total_service_fee': merchant_service_fee + merchant_service_tax
+                        })
                         _logger.info(
                             f"Updated payment.transaction {odoo_tx.id} (provider_reference={payu_id}) with settled_amount={merchant_net_amount}"
                         )
@@ -487,3 +501,33 @@ class PaymentTransaction(models.Model):
                         )
         except Exception as e:
             _logger.error(f"Error posting to remote API: {str(e)}")
+
+    def get_current_formatted_time(self):
+        # Current time in UTC timezone
+        now_utc = datetime.now(timezone.utc)
+        # Format string to match: "EEE, dd MMM yyyy HH:mm:ss zzz"
+        # Python format directives: %a=weekday abbrev, %d=day, %b=month abbrev, %Y=year, %H=hour (24h), %M=minute, %S=second, %Z=timezone name
+        format_str = "%a, %d %b %Y %H:%M:%S %Z"
+        return now_utc.strftime(format_str) 
+       
+    def generate_digest(self ,body: str) -> str:
+        # Create SHA-256 hash object
+        sha256_hash = hashlib.sha256()
+        # Update with UTF-8 encoded bytes of input string
+        sha256_hash.update(body.encode('utf-8'))
+        # Get the digest bytes
+        digest_bytes = sha256_hash.digest()
+        # Encode the digest to Base64 string
+        base64_digest = base64.b64encode(digest_bytes).decode('utf-8')
+        return base64_digest
+    
+    def generate_signature(self, date: str, digest: str, secret: str) -> str:
+        data_to_sign = f"date: {date}\ndigest: {digest}"
+        # Use HMAC with SHA256 and the secret key encoded as UTF-8 bytes
+        mac = hmac.new(secret.encode('utf-8'), data_to_sign.encode('utf-8'), hashlib.sha256)
+        # Base64 encode the resulting hmac digest bytes and decode to string
+        signature = base64.b64encode(mac.digest()).decode('utf-8')
+        return signature
+    
+    def generate_authorization_header(self, key: str, signature: str) -> str:
+        return f'hmac username="{key}", algorithm="hmac-sha256", headers="date digest", signature="{signature}"'
