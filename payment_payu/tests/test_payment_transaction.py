@@ -107,9 +107,9 @@ class TestPayUPaymentTransaction(TransactionCase):
         self.tx.currency_id = self.env.ref('base.INR')
         self.tx.provider_code = 'payu'
 
-        payuCredentialClass = self.env.registry['payu.credential']
+        payu_credential_class = self.env.registry['payu.credential']
 
-        with patch.object(payuCredentialClass, 'search', return_value=self.env['payu.credential'].browse([])):
+        with patch.object(payu_credential_class, 'search', return_value=self.env['payu.credential'].browse([])):
             with self.assertRaises(ValidationError) as cm:
                 self.tx._get_specific_rendering_values({'partner_id': self.partner.id})
             self.assertIn('No credentials configured', str(cm.exception))
@@ -118,7 +118,7 @@ class TestPayUPaymentTransaction(TransactionCase):
         fake_credential = MagicMock()
         fake_credential.merchant_key = 'FAKE_KEY'
 
-        payuCredentialClass = self.env.registry['payu.credential']
+        payu_credential_class = self.env.registry['payu.credential']
         provider_class = self.env.registry['payment.provider']
 
         fake_partner = MagicMock()
@@ -133,7 +133,7 @@ class TestPayUPaymentTransaction(TransactionCase):
         fake_website = MagicMock()
         fake_website.sale_get_order.return_value = fake_order
 
-        with patch.object(payuCredentialClass, 'search', return_value=fake_credential), \
+        with patch.object(payu_credential_class, 'search', return_value=fake_credential), \
             patch.object(self.env.registry['res.partner'], 'browse', return_value=fake_partner), \
             patch('werkzeug.urls.url_join', side_effect=lambda base, path: base + path), \
             patch.object(provider_class, '_payu_generate_sign', return_value='dummyhash'), \
