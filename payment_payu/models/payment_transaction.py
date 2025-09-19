@@ -4,7 +4,7 @@ import pprint
 import json
 import uuid
 from werkzeug.urls import url_join
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import hmac
 import hashlib
@@ -40,6 +40,16 @@ class PaymentTransaction(models.Model):
     total_service_fee = fields.Float(
         string = "Total Service Fee",
         help = "Cumulative service fee charged by PayU for this transaction"
+    )
+
+    settlement_currency = fields.Char(
+        string="Currency of Settlement",
+        help="Currency in which the settlement amount is denominated"
+    )
+
+    utr_number = fields.Char(
+        string="UTR Number",
+        help="Unique Transaction Reference number provided by the bank for the transaction"
     )
 
     is_refund = fields.Boolean(string="Is Refund", compute="_compute_is_refund")
@@ -166,7 +176,7 @@ class PaymentTransaction(models.Model):
         payu_values = {
             'api_version': 14,
             'key': payu_key,
-            'txnid': self.reference,
+            'txnid': str(uuid.uuid4()),
             'amount': f"{self.amount:.2f}",
             'productinfo': 'Odoo product',
             'cart_details': cart_details,
@@ -622,39 +632,118 @@ class PaymentTransaction(models.Model):
             raise ValidationError(_("PayU: The response hash does not match the expected hash. The data may have been tampered with."))
     
     @api.model
-    def cron_send_payment_transaction_post_call(self):
-        endpoint = 'https://dvlpr-ptrip.free.beeceptor.com/settlements'
-        try:
-            response = requests.get(endpoint, timeout=30)
-            response.raise_for_status()
-            result = response.json()
-            # Process settlement data
-            for settlement in result.get('result', {}).get('data', []):
-                for tx_data in settlement.get('transaction', []):
-                    payu_id = tx_data.get('payuId')
-                    merchant_net_amount = float(tx_data.get('merchantNetAmount', 0))
-                    
-                    merchant_service_fee = float(tx_data.get('merchantServiceFee', 0))
-                    merchant_service_tax = float(tx_data.get('merchantServiceTax', 0))
+    def _get_payu_credentials(self):
+        """Fetch all PayU credentials records."""
+        return self.env['payu.credential'].search([])
 
-                    # Find the corresponding transaction record by provider_reference
-                    odoo_tx = self.env['payment.transaction'].search(
-                        [('provider_reference', '=', payu_id)], limit=1
-                    )
-                    if odoo_tx:
-                        odoo_tx.write({
-                        'settled_amount': merchant_net_amount,
-                        'total_service_fee': merchant_service_fee + merchant_service_tax
-                        })
-                        _logger.info(
-                            f"Updated payment.transaction {odoo_tx.id} (provider_reference={payu_id}) with settled_amount={merchant_net_amount}"
-                        )
-                    else:
-                        _logger.warning(
-                            f"Transaction with provider_reference={payu_id} not found!"
-                        )
+    def _build_request_headers(self, credential, formatted_date, digest, signature):
+        """Construct headers required for the API call."""
+        return {
+            'Date': formatted_date,
+            'Digest': digest,
+            'Authorization': self.generate_authorization_header(credential.merchant_key, signature)
+        }
+
+    def _call_payu_api(self, endpoint, params, headers):
+        """Make the GET request to PayU and return the raw response and parsed JSON."""
+        response = requests.get(endpoint, params=params, headers=headers, timeout=30)
+        response.raise_for_status()
+
+        try:
+            result = response.json()
+            _logger.info("Parsed JSON Response: %s", json.dumps(result, indent=2))
+            return result
         except Exception as e:
-            _logger.error(f"Error posting to remote API: {str(e)}")
+            _logger.error("Error parsing JSON: %s", str(e))
+            return {}
+
+    def _process_settlement_data(self, result, credential):
+        """Update Odoo payment transactions based on settlement data."""
+        size = result.get('result', {}).get('size', 0)
+        _logger.info("Number of settlements in response: %d", size)
+        if  size == 0:
+            return False
+        for settlement in result.get('result', {}).get('data', []):
+            utr_number = settlement.get('utrNumber')
+            for tx_data in settlement.get('transaction', []):
+                payu_id = tx_data.get('payuId')
+                merchant_net_amount = float(tx_data.get('merchantNetAmount', 0))
+                merchant_service_fee = float(tx_data.get('merchantServiceFee', 0))
+                merchant_service_tax = float(tx_data.get('merchantServiceTax', 0))
+                odoo_tx = self.env['payment.transaction'].search(
+                    [('provider_reference', '=', payu_id)], limit=1
+                )
+                if odoo_tx:
+                    odoo_tx.write({
+                        'settled_amount': merchant_net_amount,
+                        'total_service_fee': merchant_service_fee + merchant_service_tax,
+                        'settlement_currency': tx_data.get('settlementCurrency'),
+                        'utr_number': utr_number
+                    })
+                    _logger.info(
+                        f"Updated payment.transaction {odoo_tx.id} (provider_reference={payu_id}) "
+                        f"with settled_amount={merchant_net_amount}"
+                    )
+                else:
+                    _logger.warning(
+                        f"Transaction with provider_reference={payu_id} not found!"
+                    )
+        return True
+
+    def _get_settlement_endpoint(self, provider_state):
+        _logger.info("Determining settlement endpoint for provider state: %s", provider_state)
+        settlement_dns = 'https://test.payu.in/settlement/range' if provider_state == 'test' else 'https://info.payu.in/settlement/range'
+        return settlement_dns
+
+    @api.model
+    def cron_send_payment_transaction_post_call(self):
+        _logger.info("Starting PayU settlement cron job.")
+        
+        custom_date = datetime.today()  # Sets custom_date to today's date
+        yesterday = (custom_date - timedelta(days=1)).strftime('%Y-%m-%d')
+        page_size = 100
+        _logger.info("Yesterday's date: %s", yesterday)
+
+        credentials = self._get_payu_credentials()
+
+        for credential in credentials:
+
+            endpoint = self._get_settlement_endpoint(credential.provider_id.state)
+
+            if credential.provider_id.name != 'PayU':
+                return
+            
+            _logger.info(f"Processing PayU credential for provider_id={credential.provider_id.id} "
+                        f"currency_id={credential.currency_id.name} merchant_key={credential.merchant_key}")
+            page = 1
+            while True:
+                params = {
+                    'dateFrom': yesterday,
+                    'pageSize': page_size,
+                    'page': page,
+                }
+                formatted_date = self.get_current_formatted_time()
+                body = ''
+                digest = self.generate_digest(body)
+                signature = self.generate_signature(formatted_date, digest, credential.merchant_salt)
+                headers = self._build_request_headers(credential, formatted_date, digest, signature)
+
+                try:
+                    result = self._call_payu_api(endpoint, params, headers)
+                    _logger.info(f"API call result for credential_id={credential.id}, page={page}: {result}")
+
+                    if result.get('status') == 1:
+                        _logger.info(f"No settlements found for credential_id={credential.id}.")
+                        return
+                    
+                    keep_running = self._process_settlement_data(result, credential)
+                    if not keep_running:
+                        _logger.info(f"No more data for credential_id={credential.id}, stopping pagination.")
+                        break
+                    page += 1
+                except Exception as e:
+                    _logger.error(f"Error for credential_id={credential.id}: {str(e)}")
+                    break
 
     def get_current_formatted_time(self):
         # Current time in UTC timezone

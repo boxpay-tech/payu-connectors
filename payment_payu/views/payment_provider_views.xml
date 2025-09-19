@@ -81,7 +81,7 @@
         <field name="inherit_id" ref="payment.payment_transaction_form" />
         <field name="arch" type="xml">
             <!-- Insert the field after 'Provider Reference' -->
-            <xpath expr="//field[@name='provider_reference']" position="after">
+            <xpath expr="//field[@name='refund_bank_reference']" position="after">
                 <field name="settled_amount" />
             </xpath>
         </field>
@@ -98,4 +98,29 @@
             </xpath>
         </field>
     </record>
+
+    <record id="view_payment_transaction_form_inherit_settlement_currency" model="ir.ui.view">
+        <field name="name">payment.transaction.form.settlement.currency.inherit</field>
+        <field name="model">payment.transaction</field>
+        <field name="inherit_id" ref="payment.payment_transaction_form" />
+        <field name="arch" type="xml">
+
+            <xpath expr="//field[@name='total_service_fee']" position="after">
+                <field name="settlement_currency" />
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_payment_transaction_form_inherit_utr_number" model="ir.ui.view">
+        <field name="name">payment.transaction.form.utr.number.inherit</field>
+        <field name="model">payment.transaction</field>
+        <field name="inherit_id" ref="payment.payment_transaction_form" />
+        <field name="arch" type="xml">
+
+            <xpath expr="//field[@name='settlement_currency']" position="after">
+                <field name="utr_number" />
+            </xpath>
+        </field>
+    </record>
+
 </odoo>
