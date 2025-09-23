@@ -661,33 +661,43 @@ class PaymentTransaction(models.Model):
         """Update Odoo payment transactions based on settlement data."""
         size = result.get('result', {}).get('size', 0)
         _logger.info("Number of settlements in response: %d", size)
-        if  size == 0:
+        if size == 0:
             return False
+
         for settlement in result.get('result', {}).get('data', []):
             utr_number = settlement.get('utrNumber')
             for tx_data in settlement.get('transaction', []):
-                payu_id = tx_data.get('payuId')
-                merchant_net_amount = float(tx_data.get('merchantNetAmount', 0))
-                merchant_service_fee = float(tx_data.get('merchantServiceFee', 0))
-                merchant_service_tax = float(tx_data.get('merchantServiceTax', 0))
-                odoo_tx = self.env['payment.transaction'].search(
-                    [('provider_reference', '=', payu_id)], limit=1
-                )
-                if odoo_tx:
-                    odoo_tx.write({
-                        'settled_amount': merchant_net_amount,
-                        'total_service_fee': merchant_service_fee + merchant_service_tax,
-                        'settlement_currency': tx_data.get('settlementCurrency'),
-                        'utr_number': utr_number
-                    })
-                    _logger.info(
-                        f"Updated payment.transaction {odoo_tx.id} (provider_reference={payu_id}) "
-                        f"with settled_amount={merchant_net_amount}"
+                try:
+                    payu_id = tx_data.get('payuId')
+                    merchant_net_amount = float(tx_data.get('merchantNetAmount', 0))
+                    merchant_service_fee = float(tx_data.get('merchantServiceFee', 0))
+                    merchant_service_tax = float(tx_data.get('merchantServiceTax', 0))
+
+                    odoo_tx = self.env['payment.transaction'].search(
+                        [('provider_reference', '=', payu_id)], limit=1
                     )
-                else:
-                    _logger.warning(
-                        f"Transaction with provider_reference={payu_id} not found!"
+
+                    if odoo_tx:
+                        odoo_tx.write({
+                            'settled_amount': merchant_net_amount,
+                            'total_service_fee': merchant_service_fee + merchant_service_tax,
+                            'settlement_currency': tx_data.get('settlementCurrency'),
+                            'utr_number': utr_number
+                        })
+                        _logger.info(
+                            f"Updated payment.transaction {odoo_tx.id} (provider_reference={payu_id}) "
+                            f"with settled_amount={merchant_net_amount}"
+                        )
+                    else:
+                        _logger.warning(
+                            f"Transaction with provider_reference={payu_id} not found!"
+                        )
+                except Exception as e:
+                    _logger.error(
+                        f"Error processing transaction with provider_reference={tx_data.get('payuId')}: {e}",
+                        exc_info=True
                     )
+                    continue
         return True
 
     def _get_settlement_endpoint(self, provider_state):
